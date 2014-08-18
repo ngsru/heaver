@@ -1,0 +1,6 @@
+*.pyc
+/heaver.egg-info
+/build
+/dist
+/.ropeproject
+*.swp

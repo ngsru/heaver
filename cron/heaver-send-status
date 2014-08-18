@@ -1,0 +1,3 @@
+PATH=/usr/bin
+*/1 * * * * root heaver --send-status
+

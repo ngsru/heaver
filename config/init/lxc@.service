@@ -1,0 +1,13 @@
+[Unit]
+Description=Unit for container %i
+Requires=heaver-hooks@.service
+Before=heaver-hooks@.service
+
+[Service]
+SuccessExitStatus=0 137
+Type=simple
+ExecStart=/usr/bin/lxc-start -n %i
+ExecStop=/usr/bin/lxc-stop -k -n %i
+
+[Install]
+WantedBy=multi-user.target

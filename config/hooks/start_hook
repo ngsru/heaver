@@ -1,0 +1,135 @@
+#!/bin/bash
+
+# can't proceed, without container name as argument
+if [[ -z $1 ]]; then
+    exit
+fi
+
+pidtree() {
+    echo -n $1 " "
+    for _child in $(ps -o pid --no-headers --ppid $1); do
+	pidtree ${_child}
+    done
+}
+
+gen_port() {
+    while [ 1 ]; do
+	TEST_PORT=$(($RANDOM % 5000 + 20000))
+        if [ -z `ss -ntl4|grep :$TEST_PORT` ]; then
+	    PORT=$TEST_PORT
+	    break
+	fi
+    done
+}
+
+FW=/sbin/iptables
+# setup iptables 
+modprobe ip_tables
+
+# get container ip
+LXC_IP=$(cat /var/lib/lxc/${1}/config|grep 'lxc.network.ipv4 = '|tr '/' ' '|awk '{print $3}'|tr -d '\n')
+# get host local ip
+MWS_IP=$(netstat -nt|awk '{print $4}'|grep -o '[0-9]*\.[0-9]*\.[0-9]*\.[0-9]*'|grep -v '127.0.0.1'|sort -u)
+
+# Tune delay, wait for starting INIT and other staff of container
+sleep 10
+
+# container not started or problems with determining pid
+LXC_PID=$(systemctl show -p MainPID lxc@${1}|tr '=' ' '|awk '{print $2}')
+if [[ -z $LXC_PID ]]; then
+    exit
+fi
+
+# Assig PID tree with non-systemd cgroup
+PID_TREE=$(pidtree $LXC_PID)
+for SPPID in $PID_TREE; do
+    cgclassify -g cpuset,devices,freezer,net_cls,blkio,cpu,memory:lxc/$1 $SPPID
+done
+
+
+failcount=0
+SSHD_PID=$(pidtree $LXC_PID|xargs ps -o pid,command --no-headers|grep sshd|awk '{print $1}')
+# try 20times each 2 secs to find sshd process
+while [[ -z $SSHD_PID  && failcount -le 20 ]]; do
+    SSHD_PID=$(pidtree $LXC_PID|xargs ps -o pid,command --no-headers|grep sshd|awk '{print $1}')
+    sleep 2
+    let 'failcount+=1'
+done
+
+# create cgroup for reservation resources for each container
+# by default, newley created cgroup are not limited
+# not need after modification of "startup" of heaver
+#cgcreate -a root -g memory,cpu:reservation/$1
+
+# add priviledges to SSHD process
+# if SSHD founded
+if [ -n "$SSHD_PID" ]; then
+    for SSHS in $SSHD_PID; do
+        cgclassify -g cpu,memory:reservation/$1 $SSHD_PID
+    done
+fi
+
+# Create temporary directories
+mkdir -p /tmp/heaver
+echo $$ > /tmp/heaver/heaver_${1}_hook.pid
+
+ALARM_STATE=0
+HOOK_ALONE_COUNTER=0
+echo $ALARM_STATE > /tmp/heaver/heaver_${1}_alarm.state
+while [ 1 ]; do
+    # do check
+    
+    # check, if main process exited, but hook not
+    LXC_PID=$(ps fax|grep 'lxc-start'|grep $1|grep -v grep|awk '{print $1}')
+    if [[ -z $LXC_PID ]]; then
+	let 'HOOK_ALONE_COUNTER += 1'
+    fi
+    
+    # if 
+    if [ $HOOK_ALONE_COUNTER -eq 120 ]; then
+	/bin/bash /etc/heaver/hooks/post_stop_hook $1
+	exit
+    fi
+    
+    SSHD_TREE=$(pidtree $SSHD_PID)
+    CGROUPED_TREE=$(cat /sys/fs/cgroup/memory/reservation/${1}/tasks)
+    for PROC in $CGROUPED_TREE; do
+	if [ $(echo $SSHD_TREE|tr ' ' '\n'|grep -e "^${PROC}\$"|wc -l|tr -d '\n') -eq 0 ]; then
+	    cgclassify -g cpu,memory:lxc/$1 $PROC
+	fi
+    done
+
+    USED_MEMORY=$(/usr/bin/lxc-cgroup -n $1 memory.usage_in_bytes)
+    MAX_MEMORY=$(/usr/bin/lxc-cgroup -n $1 memory.limit_in_bytes)
+
+    ALARM_STATE=$(cat /tmp/heaver/heaver_${1}_alarm.state)
+    
+    # if rest of memory less than 16mb, initiate hook
+    compare_result=$(python2 -c "print $USED_MEMORY>=$MAX_MEMORY-16*1024*1024")
+
+    if [ "$compare_result" == "True" ]; then
+	if [ $ALARM_STATE -eq 0 ]; then
+	    ALARM_STATE=1
+	    gen_port
+	    /usr/bin/python2 /etc/heaver/hooks/extra/microwebserver.py $PORT $LXC_PID  1> /dev/null 2>&1 &
+	    echo 1 > /proc/sys/net/ipv4/ip_forward
+	    ${FW} -t nat -A POSTROUTING -d ${MWS_IP} -p tcp --dport ${PORT} -j SNAT --to-source ${LXC_IP}
+	    ${FW} -t nat -A PREROUTING -d ${LXC_IP}  -p tcp --dport 80 -j DNAT --to-destination ${MWS_IP}:${PORT}
+	    echo ${FW} -t nat -D POSTROUTING -d ${MWS_IP} -p tcp --dport $PORT -j SNAT --to-source ${LXC_IP} > /tmp/heaver/heaver_${1}_iptables_remove.rules
+	    echo ${FW} -t nat -D PREROUTING -d ${LXC_IP}  -p tcp --dport 80 -j DNAT --to-destination ${MWS_IP}:${PORT} >> /tmp/heaver/heaver_${1}_iptables_remove.rules
+	fi
+    else
+    	if [ $ALARM_STATE -eq 1 ]; then
+	    ALARM_STATE=0
+	    ${FW} -t nat -D POSTROUTING -d ${MWS_IP} -p tcp --dport $PORT -j SNAT --to-source ${LXC_IP}
+	    ${FW} -t nat -D PREROUTING -d ${LXC_IP}  -p tcp --dport 80 -j DNAT --to-destination ${MWS_IP}:${PORT}
+	    rm -f /tmp/heaver/heaver_${1}_iptables_remove.rules
+	    MWS_PID=$(cat /tmp/heaver/microweb_${1}_heaver.pid)
+	    kill $MWS_PID
+	fi
+    fi
+    
+    echo $ALARM_STATE > /tmp/heaver/heaver_${1}_alarm.state
+    
+    sleep 1
+done

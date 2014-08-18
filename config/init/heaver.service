@@ -1,0 +1,15 @@
+[Unit]
+Description=Heaver startup and shutdown hook
+After=network.target
+Wants=apparmor.service
+After=apparmor.service
+
+[Service]
+Type=oneshot
+ExecStartPre=/usr/bin/mount --make-rprivate /
+ExecStart=/usr/bin/heaver --startup
+ExecStop=/usr/bin/heaver --shutdown
+RemainAfterExit=true
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,47 @@
+#!/bin/bash
+
+# implement hook here
+# post hooks starts in background
+
+echo "Gracefully stopping heaver-hooks for $1"
+# remove rules
+IPTABLES_RULES=/tmp/heaver/heaver_${1}_iptables_remove.rules
+if [ -f "$IPTABLES_RULES" ]; then
+    cat $IPTABLES_RULES|bash
+fi
+
+# remove cgroup for reservation and lxc
+cgdelete -r -g cpu:reservation/$1 1> /dev/null 2>&1
+cgdelete -r -g memory:reservation/$1 1> /dev/null 2>&1
+cgdelete -r -g cpuset:lxc/$1 1> /dev/null 2>&1
+cgdelete -r -g devices:lxc/$1 1> /dev/null 2>&1
+cgdelete -r -g freezer:lxc/$1 1> /dev/null 2>&1
+cgdelete -r -g net_cls:lxc/$1 1> /dev/null 2>&1
+cgdelete -r -g blkio:lxc/$1 1> /dev/null 2>&1
+cgdelete -r -g cpu:lxc/$1 1> /dev/null 2>&1
+cgdelete -r -g memory:lxc/$1 1> /dev/null 2>&1
+
+# stop watchdog
+PID_FILE=/tmp/heaver/heaver_${1}_hook.pid
+
+if [ -f "$PID_FILE" ]; then
+    PID=`cat $PID_FILE`
+    if echo $PID | grep "^[0-9]*$">/dev/null; then
+        kill $PID 1> /dev/null 2>&1
+    fi
+    rm $PID_FILE
+fi
+
+
+MWS_PIDFILE=/tmp/heaver/microweb_${1}_heaver.pid
+if [ -f "$MWS_PIDFILE" ]; then
+    PID=`cat $MWS_PIDFILE`
+    if echo $PID | grep "^[0-9]*$">/dev/null; then
+        kill $PID 1> /dev/null 2>&1
+    fi
+    rm $MWS_PIDFILE
+fi
+
+
+# remove state file
+rm -f /tmp/heaver/heaver_${1}_alarm.state

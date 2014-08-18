@@ -1,0 +1,11 @@
+[Unit]
+Description=Heaver hooks for container %i
+StopWhenUnneeded=true
+
+[Service]
+Type=simple
+ExecStart=/bin/bash /etc/heaver/hooks/start_hook %i
+ExecStop=/bin/bash /etc/heaver/hooks/stop_hook %i
+
+[Install]
+WantedBy=multi-user.target

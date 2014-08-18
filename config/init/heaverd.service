@@ -1,0 +1,10 @@
+[Unit]
+Description=Heaver daemon
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/heaverd
+
+[Install]
+WantedBy=multi-user.target

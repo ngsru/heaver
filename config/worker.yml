@@ -1,0 +1,84 @@
+# Configuration file for heaver
+
+upstream: 127.0.0.1:8086
+
+# All about network
+net:
+    # file for storing used ip addresses
+    used_ranges_path: /var/lib/heaver/used_ranges
+
+    # Network configuration. Each item represents network to create interface in
+    networks:
+        - name: br0
+          type: bridge
+          # ip address ranges, available for this network
+          #ranges: ["192.168.200.2-100"]
+          ranges: [10.0.231.107-217]
+          # when type = bridge, bridge option denotes bridge device to use
+          bridge: br0
+          # gateway determine gateway ip for container network. If set to 'auto',
+          # lxc will set it to ip address of corresponding bridge device
+          gateway: auto
+
+# default limits for resources
+limits:
+    # maximum cpu time per second per core (i.e. to allow two cores, set to 2)
+    cpu: 4.0
+    # maximum memory. Allowed suffixes: K, M, G for kilobytes, megabytes and gigabytes
+    memory: 4G
+    # cpu numbering begins from 0
+    # which cpu will not be used by containers? (using cpuset.cpus)
+    # TODO: what if we have only one cpu?
+    reserve_cpu: 0
+
+cgroup:
+    # raw cgroup values
+    # disable oom killer by default
+    memory.oom_control: 1
+
+# All about logging
+logging:
+    # file logging
+    # log file
+    filename: /var/log/heaver/worker.log
+
+    # log level
+    level: info
+
+    # log format
+    format: "%(asctime)s %(msg)s"
+    
+    # logging to console (including daemon)
+    console_level: error
+
+    # logging format for pretty-printing
+    console_format: "%(msg)s"
+
+
+image:
+    # fs backend to use
+    # available backends: zfs, simple
+    fs_type: zfs
+
+    # where to store images
+    path_to_images_dir: /var/lib/heaver/images
+
+    # where to store lock files
+    path_to_locks_dir: /var/lib/heaver/lock 
+
+    # where instances are located
+    path_to_instances_dir: /var/lib/heaver/instances
+
+    # central image storage url
+    remote_image_url: http://chef.ngs.local:8085/
+
+    # [zfs] zfs pool
+    zfs_pool: zroot
+
+    # [zfs] fs quota
+    zfs_fs_size: 1G
+
+# hooks definition
+#hooks:
+#    pre_start_hook: /etc/heaver/hooks/pre_start_hook
+#    pre_stop_hook: /etc/heaver/hooks/pre_stop_hook
